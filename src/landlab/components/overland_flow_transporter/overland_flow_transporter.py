@@ -435,7 +435,7 @@ class OverlandFlowTransporter(Component):
         q_flood = Q_flood/self.grid.dx
 
         S_flood = np.maximum(self.grid.at_node['topographic__steepest_slope'], slope_min)
-        # y_flood = ((self._n_t * q_flood) / np.sqrt(S_flood)) ** (3/5)
+        #  y_flood = ((self._n_t * q_flood) / np.sqrt(S_flood)) ** (3/5)
 
         ## Step 3: Restore z
         self._topographic_elev[:] = z_init
@@ -445,6 +445,7 @@ class OverlandFlowTransporter(Component):
             q_flood**0.6 * self._n_f**1.5
 
         self._shear_stress = A * self._n_t**(-0.9)
+        self._f_s[:] = (self._n_f / self._n_t) ** 1.5 
         excess = self._shear_stress - self._tau_c
 
         (excess_more_0,) = np.where(excess > 0.0)
