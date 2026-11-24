@@ -237,6 +237,11 @@ class TruckPassErosion(Component):
         F_af0 = 0.5, #initial fraction of fines in interstitial spaces of coarse in active layer
         F_sf0 = 1,
         F_bc0 = 0.5,
+        phi_limit = 0.28,
+        long_var = None,          # None, "phi_limit", "F_af0", or "both"
+        long_var_amp = 0.05,      # fractional amplitude (factor = 1 + amp*sin(...))
+        long_var_harmonics = (4, 5),   # one harmonic per tire track
+        long_var_phases = (0.0, 0.0),  # radians, one per tire track
     ):
         """Initialize TruckPassErosion.
 
@@ -285,6 +290,13 @@ class TruckPassErosion(Component):
         self._F_af0 = F_af0
         self._F_sf0 = F_sf0
         self._F_bc0 = F_bc0
+        self._phi_limit = phi_limit
+        if long_var not in (None, "phi_limit", "F_af0", "both"):
+            raise ValueError("long_var must be None, 'phi_limit', 'F_af0' or 'both'")
+        self._long_var = long_var
+        self._long_amp = long_var_amp
+        self._long_harm = long_var_harmonics
+        self._long_phase = long_var_phases
 
         #Get porosity as fields for each layer
         if "phi_c_a" in grid.at_node:
@@ -410,6 +422,8 @@ class TruckPassErosion(Component):
                 "active__mass_fines", at="node", dtype=float
             )
             self._Saf[:] = self._F_af0*self._Sac
+            if self._long_var in ("F_af0", "both"):
+                self._Saf[:] *= self._faf0_longitudinal_factor()
             self._Sa[:] = np.maximum(self._Sac, self._Saf)
             self._Maf[:] = self._Saf[:]*(1-self._phi_f_a[:])*self._rho_s*self._area*self._phi_c_a[:]
 
@@ -462,6 +476,29 @@ class TruckPassErosion(Component):
         """The mass of fine sediment added to the active layer at
         each node due to pumping"""
         return self._sed_pump
+
+    def _row_factor(self, nodes, track_idx):
+        """Sinusoidal factor 1 + amp*sin(2*pi*h*s + phase) for the given nodes,
+        where s in [0,1] is the along-road position (grid row) and h/phase
+        are the harmonic and phase of tire track `track_idx` (0 or 1)."""
+        nrows, ncols = self._grid.shape
+        rows = np.asarray(nodes) // ncols
+        s = rows / max(nrows - 1, 1)
+        return 1.0 + self._long_amp*np.sin(
+            2*np.pi*self._long_harm[track_idx]*s + self._long_phase[track_idx])
+
+    def _faf0_longitudinal_factor(self):
+        """Per-node multiplier for the initial F_af0 (1 everywhere except
+        the columns each tire track can occupy: track +/- 1 column shift)."""
+        factor = np.ones(self._grid.number_of_nodes)
+        center = (self._grid.nodes[:, self._centerline]
+                  if np.ndim(self._centerline) == 0 else self._centerline)
+        hw = self._half_width
+        offs = [np.arange(-hw-3, -hw+3), np.arange(hw-2, hw+4)]  # tracks 0, 1
+        for i, o in enumerate(offs):
+            nodes = np.unique(np.concatenate([center + k for k in o]))
+            factor[nodes] = self._row_factor(nodes, i)
+        return factor
 
     def calc_tire_tracks(self):
         #Grab center location of road if given a node, else use the array given
@@ -577,7 +614,11 @@ class TruckPassErosion(Component):
                                         self._phi_c_a[self.tire_tracks[0:2][i][less_than_Sac]]*\
                                         self._rho_s*self._area
 
-                        phi_limit = 0.28
+                        if self._long_var in ("phi_limit", "both"):
+                            phi_limit = self._phi_limit*self._row_factor(
+                                self.tire_tracks[0:2][i], i)
+                        else:
+                            phi_limit = self._phi_limit
                         (greater_than_phi_lim,) = np.where(self._phi_c_s[self.tire_tracks[0:2][i]] >= phi_limit)
                         self._phi_c_s[self.tire_tracks[0:2][i][greater_than_phi_lim]] -= self._comp*\
                                         (self._Saf[self.tire_tracks[0:2][i][greater_than_phi_lim]]/\
@@ -633,7 +674,11 @@ class TruckPassErosion(Component):
                                         self._phi_c_a[self.tire_tracks[0:2][i][less_than_Sac]]*\
                                         self._rho_s*self._area
 
-                        phi_limit = 0.28
+                        if self._long_var in ("phi_limit", "both"):
+                            phi_limit = self._phi_limit*self._row_factor(
+                                self.tire_tracks[0:2][i], i)
+                        else:
+                            phi_limit = self._phi_limit
                         (greater_than_phi_lim,) = np.where(self._phi_c_s[self.tire_tracks[0:2][i]] >= phi_limit)
                         self._phi_c_s[self.tire_tracks[0:2][i][greater_than_phi_lim]] -= self._comp
                         self._phi_f_s[self.tire_tracks[0:2][i][greater_than_phi_lim]] -= self._comp
